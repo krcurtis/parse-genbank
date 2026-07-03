@@ -102,6 +102,7 @@ expected_tiny = GenBank { gb_locus = Locus "3K1V_A" 34 UnknownStranded "RNA" Fal
                        , gb_definition = "Chain A, PreQ1 riboswitch."
                        , gb_accession = "3K1V_A"
                        , gb_version = "3K1V_A"
+                       , gb_dblink = Nothing
                        , gb_keywords = "."
                        , gb_segment = Nothing
                        , gb_source = "synthetic construct"
@@ -448,6 +449,7 @@ spec = describe "Tests for parsing GenBank format" $ do
                            , gb_definition = "Genus species strain strain."
                            , gb_accession = ""
                            , gb_version = ""
+                           , gb_dblink = Nothing
                            , gb_keywords = "."
                            , gb_segment = Nothing
                            , gb_source = "Genus species"
@@ -478,5 +480,52 @@ spec = describe "Tests for parsing GenBank format" $ do
     parse parse_feature "" prokka_text `shouldParse` expected
 
 
+  it "parse genbank with dblink" $ do
+    let genbank_text :: T.Text
+        genbank_text = T.pack . unlines $ [ "LOCUS       3K1V_A                    34 bp    RNA     linear   SYN 21-FEB-2024"
+                                          , "DEFINITION  Chain A, PreQ1 riboswitch."
+                                          , "ACCESSION   3K1V_A"
+                                          , "VERSION     3K1V_A"
+                                          , "DBLINK      BioProject: PRJNA715455"
+                                          , "            BioSample: SAMN18350240"                                         
+                                          , "KEYWORDS    ."
+                                          , "SOURCE      synthetic construct"
+                                          , "  ORGANISM  synthetic construct"
+                                          , "            other sequences; artificial sequences."
+                                          , "REFERENCE   1  (bases 1 to 34)"
+                                          , "  AUTHORS   Klein,D.J., Edwards,T.E. and Ferr&#xe9;-D'Amar&#xe9;,A.R."
+                                          , "  TITLE     Cocrystal structure of a class I preQ1 riboswitch reveals a"
+                                          , "            pseudoknot recognizing an essential hypermodified nucleobase"
+                                          , "  JOURNAL   Nat Struct Mol Biol 16 (3), 343-344 (2009)"
+                                          , "   PUBMED   19234468"
+                                          , "REFERENCE   2  (bases 1 to 34)"
+                                          , "  AUTHORS   Klein,D.J., Edwards,T.E. and Ferre-D'Amare,A.R."
+                                          , "  TITLE     Direct Submission"
+                                          , "  JOURNAL   Submitted (28-SEP-2009)"
+                                          , "COMMENT     Cocrystal structure of a mutant class-I preQ1 riboswitch."
+                                          , "FEATURES             Location/Qualifiers"
+                                          , "     source          1..34"
+                                          , "                     /organism=\"synthetic construct\""
+                                          , "                     /mol_type=\"other RNA\""
+                                          , "                     /db_xref=\"taxon:32630\""
+                                          , "ORIGIN      "
+                                          , "        1 agaggttcta gcacatccct ctataaaaaa ctaa"
+                                          , "//"
+                                          , ""
+                                          , ""]
+        expected = GenBank { gb_locus = Locus "3K1V_A" 34 UnknownStranded "RNA" False (Just "SYN") "21-FEB-2024"
+                           , gb_definition = "Chain A, PreQ1 riboswitch."
+                           , gb_accession = "3K1V_A"
+                           , gb_version = "3K1V_A"
+                           , gb_dblink = Just "BioProject: PRJNA715455 BioSample: SAMN18350240"
+                           , gb_keywords = "."
+                           , gb_segment = Nothing
+                           , gb_source = "synthetic construct"
+                           , gb_organism = "synthetic construct other sequences; artificial sequences."
+                           , gb_references = [expected_ref1, expected_ref2]
+                           , gb_comment = Just "Cocrystal structure of a mutant class-I preQ1 riboswitch."
+                           , gb_features = [feature1_out]
+                           , gb_origin_sequence = "agaggttctagcacatccctctataaaaaactaa"
+                           }
 
-
+    parse parse_genbank "" genbank_text `shouldParse` expected

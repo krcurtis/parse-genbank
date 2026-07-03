@@ -77,6 +77,7 @@ data GenBank = GenBank { gb_locus :: Locus
                        , gb_definition :: T.Text
                        , gb_accession :: T.Text
                        , gb_version :: T.Text
+                       , gb_dblink :: Maybe T.Text
                        , gb_keywords :: T.Text
                        , gb_segment :: Maybe T.Text
                        , gb_source :: T.Text
@@ -168,6 +169,7 @@ parse_genbank = do
   gb_definition <- parse_entry "DEFINITION"
   gb_accession <- (try (parse_entry "ACCESSION")) <|> (try (parse_empty_entry "ACCESSION"))
   gb_version <- (try (parse_entry "VERSION")) <|> (try (parse_empty_entry "VERSION"))
+  gb_dblink <- optional (try (parse_entry "DBLINK"))
   gb_keywords <- parse_entry "KEYWORDS"
   gb_segment <- optional (try (parse_entry "SEGMENT"))    -- SEGMENT ??
   gb_source <- parse_entry "SOURCE"
