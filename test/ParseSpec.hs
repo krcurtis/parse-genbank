@@ -76,7 +76,7 @@ genbank_tiny = T.pack . unlines $ [ "LOCUS       3K1V_A                    34 bp
 expected_ref1 = Reference { r_ref_number = 1
                           , r_base_range = (1, 34)
                           , r_authors = "Klein,D.J., Edwards,T.E. and Ferr&#xe9;-D'Amar&#xe9;,A.R."
-                          , r_consortium = Nothing                          
+                          , r_consortium = Nothing
                           , r_title = "Cocrystal structure of a class I preQ1 riboswitch reveals a pseudoknot recognizing an essential hypermodified nucleobase"
                           , r_journal = "Nat Struct Mol Biol 16 (3), 343-344 (2009)"
                           , r_medline = Nothing
@@ -122,7 +122,7 @@ spec = describe "Tests for parsing GenBank format" $ do
         expected = "  "
     parse spaces "" x `shouldParse` expected
 
-    
+
   it "parse a single qualifier" $ do
     let qualifier_line = T.pack . unlines $ [ "                     /codon_start=3"
                                             , ""
@@ -158,6 +158,46 @@ spec = describe "Tests for parsing GenBank format" $ do
         feature2_out = Feature { f_feature_key = "mRNA"
                                , f_location = ImpreciseSpan 1 206 True True
                                , f_qualifiers = [ Qualifier {q_name = "product", q_value = "TCP1-beta"}
+                                                ] }
+
+        expected = [feature1_out, feature2_out]
+
+    parse (some parse_feature) "" feature_lines `shouldParse` expected
+
+  it "parse source and gene features" $ do
+
+    let feature_lines = T.pack . unlines $ [ "     source          1..2299539"
+                                           , "                     /organism=\"Fusobacterium nucleatum subsp. nucleatum ATCC"
+                                           , "                     23726\""
+                                           , "                     /mol_type=\"genomic DNA\""
+                                           , "                     /strain=\"ATCC 23726\""
+                                           , "                     /isolation_source=\"Urogentical Tract\""
+                                           , "                     /host=\"Homo sapiens\""
+                                           , "                     /sub_species=\"nucleatum\""
+                                           , "                     /culture_collection=\"ATCC:23726\""
+                                           , "                     /db_xref=\"taxon:525283\""
+                                           , "     gene            complement(join(2298962..2299539,1))"
+                                           , "                     /locus_tag=\"C4N14_RS00005\""
+                                           , "                     /old_locus_tag=\"C4N14_00005\""
+                                           , "ORIGIN      "]
+
+
+
+        feature1_out = Feature { f_feature_key = "source"
+                               , f_location = ContiguousSpan 1 2299539
+                               , f_qualifiers = [ Qualifier {q_name = "organism", q_value = "Fusobacterium nucleatum subsp. nucleatum ATCC 23726"}
+                                                , Qualifier {q_name = "mol_type", q_value = "genomic DNA"}
+                                                , Qualifier {q_name = "strain", q_value = "ATCC 23726"}
+                                                , Qualifier {q_name = "isolation_source", q_value = "Urogentical Tract"}
+                                                , Qualifier {q_name = "host", q_value = "Homo sapiens"}
+                                                , Qualifier {q_name = "sub_species", q_value = "nucleatum"}
+                                                , Qualifier {q_name = "culture_collection", q_value = "ATCC:23726"}
+                                                , Qualifier {q_name = "db_xref", q_value = "taxon:525283"}
+                                                ] }
+        feature2_out = Feature { f_feature_key = "gene"
+                               , f_location = Complement (LocationJoin [ContiguousSpan 2298962 2299539, ContiguousSpan 1 1])
+                               , f_qualifiers = [ Qualifier {q_name = "locus_tag", q_value = "C4N14_RS00005"}
+                                                , Qualifier {q_name = "old_locus_tag", q_value = "C4N14_00005"}
                                                 ] }
 
         expected = [feature1_out, feature2_out]
@@ -402,8 +442,8 @@ spec = describe "Tests for parsing GenBank format" $ do
                                          ]
         expected = Locus "CP110665.1" 2675865  UnknownStranded "DNA"  False Nothing "26-MAY-2026"
     parse parse_locus "" prokka_text `shouldParse` expected
-        
-                   
+
+
 
   it "parse prokka empty accession" $ do
     let prokka_text = T.pack . unlines $ [ "ACCESSION   "
@@ -463,7 +503,7 @@ spec = describe "Tests for parsing GenBank format" $ do
 
 
 
-  it "parse empty feature qualifier" $ do 
+  it "parse empty feature qualifier" $ do
     let prokka_text = T.pack . unlines $ [ "     gene            complement(2818816..2819943)"
                                          , "                     /locus_tag=\"SI90_12270\""
                                          , "                     /note=\"hypothetical protein; disrupted; Derived by"
@@ -487,7 +527,7 @@ spec = describe "Tests for parsing GenBank format" $ do
                                           , "ACCESSION   3K1V_A"
                                           , "VERSION     3K1V_A"
                                           , "DBLINK      BioProject: PRJNA715455"
-                                          , "            BioSample: SAMN18350240"                                         
+                                          , "            BioSample: SAMN18350240"
                                           , "KEYWORDS    ."
                                           , "SOURCE      synthetic construct"
                                           , "  ORGANISM  synthetic construct"

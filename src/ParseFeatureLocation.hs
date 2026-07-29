@@ -76,7 +76,7 @@ parse_join_location = do
   _ <- string "join"
   _ <- string "("
   initial <- parse_basic_location
-  rest <- many (try (string "," *> parse_basic_location))
+  rest <- many (try (string "," *> parse_feature_location))
   _ <- string ")"
   return $ LocationJoin (initial:rest)
 
@@ -89,6 +89,15 @@ parse_complement_location = do
   _ <- string ")"
   return $ Complement location
 
+
+
+parse_single_value_location :: Parser FeatureLocation
+parse_single_value_location = do
+  start_text <- field_digits
+  _ <- notFollowedBy (string "..")
+
+  let start = read_integer start_text
+  return $ ContiguousSpan start start
   
 
 
@@ -97,6 +106,7 @@ parse_feature_location = do
   results <- (try parse_basic_location)
             <|> (try parse_join_location)
             <|> (try parse_complement_location)
+            <|> (try parse_single_value_location)             
   return $ results
 
 

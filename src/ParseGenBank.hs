@@ -183,6 +183,7 @@ parse_genbank = do
   _ <- newline
   gb_features <- some (try (parse_feature))
 
+  _ <- optional (try (parse_entry "CONTIG")) -- Is this part of the spec? Found some genbank files with this entry field
   gb_origin_sequence <- parse_origin
 
   _ <- string "//"

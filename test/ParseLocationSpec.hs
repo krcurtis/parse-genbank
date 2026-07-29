@@ -47,7 +47,8 @@ spec = describe "Tests for parsing Genbank location strings" $ do
         expected = Complement (LocationJoin [ContiguousSpan 335780 336814, ContiguousSpan 336816 336899])
     parse parse_feature_location "" location_text `shouldParse` expected
 
-
-
-    
+  it "parse non-standard single number location" $ do
+    let location_text = "complement(join(2298962..2299539,1))"
+        expected = Complement (LocationJoin [ContiguousSpan 2298962 2299539, ContiguousSpan 1 1])
+    parse parse_feature_location "" location_text `shouldParse` expected
 

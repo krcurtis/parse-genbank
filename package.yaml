@@ -46,13 +46,10 @@ library:
   source-dirs: src
 
 executables:
-  parse-genbank-exe:
+  parse-genbank:
     main:                Main.hs
     source-dirs:         app
-    ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
+    ghc-options: []
     dependencies:
     - parse-genbank
 
