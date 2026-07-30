@@ -75,7 +75,7 @@ genbank_tiny = T.pack . unlines $ [ "LOCUS       3K1V_A                    34 bp
 
 expected_ref1 = Reference { r_ref_number = 1
                           , r_base_range = (1, 34)
-                          , r_authors = "Klein,D.J., Edwards,T.E. and Ferr&#xe9;-D'Amar&#xe9;,A.R."
+                          , r_authors = Just "Klein,D.J., Edwards,T.E. and Ferr&#xe9;-D'Amar&#xe9;,A.R."
                           , r_consortium = Nothing
                           , r_title = "Cocrystal structure of a class I preQ1 riboswitch reveals a pseudoknot recognizing an essential hypermodified nucleobase"
                           , r_journal = "Nat Struct Mol Biol 16 (3), 343-344 (2009)"
@@ -85,7 +85,7 @@ expected_ref1 = Reference { r_ref_number = 1
 
 expected_ref2 = Reference { r_ref_number = 2
                           , r_base_range = (1, 34)
-                          , r_authors = "Klein,D.J., Edwards,T.E. and Ferre-D'Amare,A.R."
+                          , r_authors = Just "Klein,D.J., Edwards,T.E. and Ferre-D'Amare,A.R."
                           , r_consortium = Nothing
                           , r_title = "Direct Submission"
                           , r_journal = "Submitted (28-SEP-2009)"
@@ -304,7 +304,7 @@ spec = describe "Tests for parsing GenBank format" $ do
                                       , "COMMENT     On Apr 11, 2002 this sequence version replaced L09137.1." ]
         expected = Reference { r_ref_number = 1
                              , r_base_range = (1,2686)
-                             , r_authors = "Yanisch-Perron,C., Vieira,J. and Messing,J."
+                             , r_authors = Just "Yanisch-Perron,C., Vieira,J. and Messing,J."
                              , r_consortium = Nothing
                              , r_title = "Improved M13 phage cloning vectors and host strains: nucleotide sequences of the M13mp18 and pUC19 vectors"
                              , r_journal = "Gene 33 (1), 103-119 (1985)"

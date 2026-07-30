@@ -71,7 +71,22 @@ data CommandParameters = ExtractGeneNucleotide { egn_arg_input_genbank :: String
                        | FindFeatureOverlap { ffo_arg_input_genbank :: String
                                             , ffo_arg_location :: String
                                             }
+                       | InfoTable { it_arg_input_genbank :: Maybe String
+                                   , it_arg_output_tsv :: String
+                                   }
   deriving (Show)
+
+
+-- some information about a genbank record
+data RecordInfo = RecordInfo { ri_accession :: T.Text  -- accession as used by the genbank record
+                             , ri_source :: T.Text
+                             , ri_bp :: Int
+                             , ri_circular :: Bool
+                             , ri_dblink :: T.Text  -- this field might not be present in the original genbank
+                             , ri_definition :: T.Text
+                             }
+  deriving (Show)
+
 
 --------------------------------------------------------------------------------
 --- Command line argument parsing
@@ -83,6 +98,15 @@ input_genbank_parse = O.strOption
                         <> O.metavar "FILE"
                         <> O.help "GenBank file to read"
                       )
+
+multi_input_genbank_parse :: IsString s => O.Parser (Maybe s)
+multi_input_genbank_parse = optional $ O.strOption
+                      ( O.long "input-genbank"
+                        <> O.short 'i'
+                        <> O.metavar "FILE"
+                        <> O.help "GenBank file to read, or use stdin if not present"
+                      )
+
 
 gene_name_parse :: IsString s => O.Parser s
 gene_name_parse = O.strOption
@@ -99,6 +123,15 @@ output_fasta_parse = O.strOption
                         <> O.metavar "FILE"
                         <> O.help "FASTA file"
                       )
+
+output_tsv_parse :: IsString s => O.Parser s
+output_tsv_parse = O.strOption
+                      ( O.long "output-tsv"
+                        <> O.short 't'
+                        <> O.metavar "FILE"
+                        <> O.help "TSV output file"
+                      )
+
 
 product_string_parse :: IsString s => O.Parser s
 product_string_parse = O.strOption
@@ -150,6 +183,10 @@ find_feature_overlap_opts = FindFeatureOverlap <$> input_genbank_parse <*> locat
 dump_fasta_opts :: O.Parser CommandParameters
 dump_fasta_opts = DumpFasta <$> input_genbank_parse <*> output_fasta_parse
 
+info_table_opts :: O.Parser CommandParameters
+info_table_opts = InfoTable <$> multi_input_genbank_parse <*> output_tsv_parse
+
+
 
 command_parameters :: O.Parser CommandParameters
 command_parameters = O.hsubparser
@@ -160,6 +197,7 @@ command_parameters = O.hsubparser
                    <> O.command "extract-locus-tag-nucleotides" (O.info extract_locus_tag_nucleotide_opts (O.progDesc "Extract the nucleotide sequence for CDS region corresponding to the locus tag"))
                    <> O.command "extract-product-nucleotides"   (O.info extract_product_nucleotide_opts   (O.progDesc "Extract the nucleotide sequence for CDS regions matching the specified product"))
                    <> O.command "find-feature-overlap"          (O.info find_feature_overlap_opts         (O.progDesc "List any features that overlap the specified location (features that wrap around origin may be erroneously reported)"))
+                   <> O.command "info-table"                    (O.info info_table_opts                   (O.progDesc "Generate TSV file with columns about the accessions, organism, and some supplementary info"))
                    -- <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    -- TODO ? <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    )
@@ -200,7 +238,7 @@ run_app (ExtractGeneNucleotide genbank_file gene output_fasta) = do
 -- ----------------------------------------
 run_app (ExtractLocusTagNucleotide genbank_file locus_tag output_fasta) = do
   Just g@GenBank{..} <- parse_genbank_file genbank_file
-  
+
   -- make sure ORIGIN sequence is DNA and not amino acids
   when ("DNA" /= l_molecule_type gb_locus) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
 
@@ -214,15 +252,15 @@ run_app (ExtractLocusTagNucleotide genbank_file locus_tag output_fasta) = do
   write_as_fasta seqs output_fasta
 
   putStrLn $ "DONE"
-  
-        
+
+
 -- ----------------------------------------
 run_app (ExtractProductNucleotide genbank_file product_string read_prefix output_fasta) = do
   Just g@GenBank{..} <- parse_genbank_file genbank_file
 
   -- make sure ORIGIN sequence is DNA and not amino acids
   when ("DNA" /= l_molecule_type gb_locus) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
-  
+
   let product' = T.pack product_string
       seq_label = T.pack read_prefix
       matching_cds = filter (product_filter product') gb_features
@@ -235,7 +273,7 @@ run_app (ExtractProductNucleotide genbank_file product_string read_prefix output
   write_as_fasta seqs' output_fasta
 
   putStrLn $ "DONE"
-  
+
 -- ----------------------------------------
 run_app (DumpCDSNucleotide genbank_file output_fasta) = do
   Just g@GenBank{..} <- parse_genbank_file genbank_file
@@ -258,7 +296,7 @@ run_app (DumpFasta genbank_file output_fasta) = do
   --Just GenBank{..} <- parse_genbank_file genbank_file
   Just xs <- read_all_genbank_file genbank_file
 
-  
+
   let bioseqs = map (\g -> (gb_version g, T.toUpper . gb_origin_sequence $ g)) xs
   write_as_fasta bioseqs output_fasta
 
@@ -283,7 +321,27 @@ run_app (FindFeatureOverlap genbank_file location_string) = do
   putStrLn $ "DONE"
 
 
+-- ----------------------------------------
+run_app (InfoTable genbank_file output_tsv) = do
+  --Just GenBank{..} <- parse_genbank_file genbank_file
   
+  Just xs <- case genbank_file of
+               Nothing -> read_all_genbank_from_stdin
+               Just filename -> read_all_genbank_file filename
+
+
+  let ys = map (record_line . to_record_info) xs
+      header = T.intercalate "\t" [ "accession", "source", "bp", "circular", "dblink", "definition"]
+      text = T.intercalate "\n" (header : ys)
+
+  T.writeFile output_tsv text 
+  T.appendFile output_tsv "\n"
+  
+  putStrLn $ "DONE"
+
+
+
+
 --------------------------------------------------------------------------------
 --- Utils
 
@@ -307,6 +365,17 @@ read_all_genbank_file filename = do
   -- T.putStrLn text
 
   let result = parse (some parse_genbank <* eof) filename text
+  case result of
+    Left bundle -> do
+      putStr (errorBundlePretty bundle)
+      return Nothing
+    Right xs -> return (Just xs)
+
+read_all_genbank_from_stdin :: IO (Maybe [GenBank])
+read_all_genbank_from_stdin = do
+  text <- T.getContents
+
+  let result = parse (some parse_genbank <* eof) "stdin" text
   case result of
     Left bundle -> do
       putStr (errorBundlePretty bundle)
@@ -405,7 +474,7 @@ location_to_region (LocationJoin xs) = (start, stop)  -- this might not work so 
     start = minimum coords
     stop = maximum coords
 location_to_region _ = error "ERROR other location constructs not handeled for region boundary"
-    
+
 is_contained :: (Int, Int) -> (Int, Int) -> Bool
 is_contained (outer_start, outer_stop) (inner_start, inner_stop) = start_inside && stop_inside
   where
@@ -418,6 +487,25 @@ is_contained (outer_start, outer_stop) (inner_start, inner_stop) = start_inside 
 
 is_within_feature :: (Int, Int) -> Feature -> Bool
 is_within_feature region_loci f = is_contained (location_to_region . f_location $ f) region_loci
+
+
+to_record_info :: GenBank -> RecordInfo
+to_record_info GenBank{..} = RecordInfo{..}
+  where
+    ri_accession = gb_version
+    ri_source = gb_source
+    ri_bp = l_seq_length gb_locus
+    ri_circular = l_circular gb_locus
+    ri_dblink = case gb_dblink of
+                  Nothing -> ""
+                  Just x -> x
+    ri_definition = gb_definition
+
+
+record_line :: RecordInfo -> T.Text
+record_line RecordInfo{..} = T.intercalate "\t" [ ri_accession, ri_source, T.pack . show $ ri_bp, T.pack . show $ ri_circular, ri_dblink, ri_definition]
+
+
 
 --------------------------------------------------------------------------------
 
@@ -479,4 +567,3 @@ write_as_fasta (x : xs) filename = do
   forM_ xs $ \x' -> do
     let fasta_text' = format_as_fasta x'
     T.appendFile filename fasta_text'
-

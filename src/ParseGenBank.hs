@@ -62,7 +62,7 @@ data Feature = Feature { f_feature_key :: T.Text
 
 data Reference = Reference { r_ref_number :: Int
                            , r_base_range :: (Int, Int)
-                           , r_authors :: T.Text
+                           , r_authors :: Maybe T.Text -- there's a small fraction of genbank files with no authors but has consortium
                            , r_consortium :: Maybe T.Text
                            , r_title :: T.Text
                            , r_journal :: T.Text
@@ -345,7 +345,7 @@ parse_reference = do
   stop <- fmap read_integer field_digits
   _ <- char ')'
   _ <- newline
-  r_authors <- parse_entry "AUTHORS"
+  r_authors <- optional (try (parse_entry "AUTHORS"))
   r_consortium <- optional (try (parse_entry "CONSRTM"))
   r_title <- parse_entry "TITLE"
   r_journal <- parse_entry "JOURNAL"
