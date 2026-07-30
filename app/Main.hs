@@ -255,10 +255,12 @@ run_app (DumpCDSNucleotide genbank_file output_fasta) = do
 
 -- ----------------------------------------
 run_app (DumpFasta genbank_file output_fasta) = do
-  Just GenBank{..} <- parse_genbank_file genbank_file
+  --Just GenBank{..} <- parse_genbank_file genbank_file
+  Just xs <- read_all_genbank_file genbank_file
 
-  let bioseq = (gb_version, T.toUpper gb_origin_sequence)
-  write_as_fasta [bioseq] output_fasta
+  
+  let bioseqs = map (\g -> (gb_version g, T.toUpper . gb_origin_sequence $ g)) xs
+  write_as_fasta bioseqs output_fasta
 
   putStrLn $ "DONE"
 
@@ -297,6 +299,20 @@ parse_genbank_file filename = do
       putStr (errorBundlePretty bundle)
       return Nothing
     Right xs -> return (Just xs)
+
+
+read_all_genbank_file :: String -> IO (Maybe [GenBank])
+read_all_genbank_file filename = do
+  text <- T.readFile filename
+  -- T.putStrLn text
+
+  let result = parse (some parse_genbank <* eof) filename text
+  case result of
+    Left bundle -> do
+      putStr (errorBundlePretty bundle)
+      return Nothing
+    Right xs -> return (Just xs)
+
 
 
 unpack_qualifier :: Qualifier -> (T.Text, T.Text)

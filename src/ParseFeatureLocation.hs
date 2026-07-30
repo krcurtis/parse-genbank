@@ -75,7 +75,7 @@ parse_join_location :: Parser FeatureLocation
 parse_join_location = do
   _ <- string "join"
   _ <- string "("
-  initial <- parse_basic_location
+  initial <- parse_feature_location
   rest <- many (try (string "," *> parse_feature_location))
   _ <- string ")"
   return $ LocationJoin (initial:rest)
