@@ -1,4 +1,4 @@
--- Copyright 2025 Fred Hutchinson Cancer Research Center
+-- Copyright 2026 Fred Hutchinson Cancer Research Center
 --------------------------------------------------------------------------------
 -- Utility to help with simple tasks for working with GenBank files
 
@@ -18,6 +18,7 @@ import Data.Semigroup ((<>))
 
 import Text.Megaparsec.Error -- for errorBundlePretty
 import Text.Megaparsec
+import Text.Megaparsec.Char (newline)
 
 import qualified Data.Map as Map
 import qualified Data.List as L
@@ -43,7 +44,7 @@ import Data.String (IsString)
 --------------------------------------------------------------------------------
 import ParseGenBank
 import FeatureLocation
-
+import AccessionLocationCSV
 
 
 --------------------------------------------------------------------------------
@@ -68,12 +69,19 @@ data CommandParameters = ExtractGeneNucleotide { egn_arg_input_genbank :: String
                        | DumpFasta { df_arg_input_genbank :: String
                                    , df_arg_output_file :: String
                                    }
+                       | FilterOverlapFasta { fof_arg_input_genbank :: Maybe String
+                                            , fof_arg_csv :: String
+                                            , fof_arg_output_file :: String
+                                            }
                        | FindFeatureOverlap { ffo_arg_input_genbank :: String
                                             , ffo_arg_location :: String
                                             }
                        | InfoTable { it_arg_input_genbank :: Maybe String
                                    , it_arg_output_tsv :: String
                                    }
+                       | SearchGene { sg_arg_input_genbank :: Maybe String
+                                    , sg_arg_gene :: String
+                                    }
   deriving (Show)
 
 
@@ -90,6 +98,16 @@ data RecordInfo = RecordInfo { ri_accession :: T.Text  -- accession as used by t
 
 --------------------------------------------------------------------------------
 --- Command line argument parsing
+
+accession_location_parse :: IsString s => O.Parser s
+accession_location_parse = O.strOption
+                           ( O.long "accession-csv"
+                           <> O.short 'a'
+                           <> O.metavar "FILE"
+                           <> O.help "CSV containing columns for accession,start,end for region matching"
+                           )
+
+
 
 input_genbank_parse :: IsString s => O.Parser s
 input_genbank_parse = O.strOption
@@ -177,6 +195,9 @@ extract_product_nucleotide_opts = ExtractProductNucleotide <$> input_genbank_par
 dump_cds_nucleotide_opts :: O.Parser CommandParameters
 dump_cds_nucleotide_opts = DumpCDSNucleotide <$> input_genbank_parse <*> output_fasta_parse
 
+filter_overlap_fasta_opts :: O.Parser CommandParameters
+filter_overlap_fasta_opts = FilterOverlapFasta <$> multi_input_genbank_parse <*> accession_location_parse <*> output_fasta_parse
+
 find_feature_overlap_opts :: O.Parser CommandParameters
 find_feature_overlap_opts = FindFeatureOverlap <$> input_genbank_parse <*> location_parse
 
@@ -185,6 +206,9 @@ dump_fasta_opts = DumpFasta <$> input_genbank_parse <*> output_fasta_parse
 
 info_table_opts :: O.Parser CommandParameters
 info_table_opts = InfoTable <$> multi_input_genbank_parse <*> output_tsv_parse
+
+search_gene_opts :: O.Parser CommandParameters
+search_gene_opts = SearchGene <$> multi_input_genbank_parse <*> gene_name_parse
 
 
 
@@ -196,8 +220,10 @@ command_parameters = O.hsubparser
                    <> O.command "extract-gene-nucleotides"      (O.info extract_gene_nucleotide_opts      (O.progDesc "Extract the nucleotide sequence for the gene"))
                    <> O.command "extract-locus-tag-nucleotides" (O.info extract_locus_tag_nucleotide_opts (O.progDesc "Extract the nucleotide sequence for CDS region corresponding to the locus tag"))
                    <> O.command "extract-product-nucleotides"   (O.info extract_product_nucleotide_opts   (O.progDesc "Extract the nucleotide sequence for CDS regions matching the specified product"))
+                   <> O.command "filter-overlap-fasta"          (O.info filter_overlap_fasta_opts         (O.progDesc "Filter CDS regions if region overlaps, and extract the matches to a FASTA file"))
                    <> O.command "find-feature-overlap"          (O.info find_feature_overlap_opts         (O.progDesc "List any features that overlap the specified location (features that wrap around origin may be erroneously reported)"))
                    <> O.command "info-table"                    (O.info info_table_opts                   (O.progDesc "Generate TSV file with columns about the accessions, organism, and some supplementary info"))
+                   <> O.command "search-gene"                   (O.info search_gene_opts                  (O.progDesc "Search features for gene name"))
                    -- <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    -- TODO ? <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    )
@@ -304,6 +330,21 @@ run_app (DumpFasta genbank_file output_fasta) = do
 
 
 -- ----------------------------------------
+run_app (FilterOverlapFasta genbank_file csv_file output_fasta) = do
+  accession_entries <- read_accession_location_csv csv_file
+  Just xs <- case genbank_file of
+               Nothing -> read_all_genbank_from_stdin
+               Just filename -> read_all_genbank_file filename
+
+  let bioseqs = concat . map (filter_extract_origin_seqs accession_entries) $ xs
+
+  write_as_fasta bioseqs output_fasta
+
+  putStrLn $ "DONE"
+
+  
+
+-- ----------------------------------------
 run_app (FindFeatureOverlap genbank_file location_string) = do
   Just GenBank{..} <- parse_genbank_file genbank_file
 
@@ -340,6 +381,36 @@ run_app (InfoTable genbank_file output_tsv) = do
   putStrLn $ "DONE"
 
 
+-- ----------------------------------------
+run_app (SearchGene genbank_file gene) = do
+  
+  Just xs <- case genbank_file of
+               Nothing -> read_all_genbank_from_stdin
+               Just filename -> read_all_genbank_file filename
+
+
+  let gene' = T.pack gene
+      filter_features gb = (gb_version gb, filter (gene_filter gene') (gb_features gb))
+      semipaired_features = map filter_features xs
+      all_features = concat . (map snd) $ semipaired_features
+      paired_features = concat . map (\(x,ys) -> zip (repeat x) ys) $ semipaired_features
+      
+
+  case (length all_features, length xs) of
+    (x,1) | x > 0 -> putStrLn [i|INFO found #{x} CDS regions listing gene #{gene} in #{gb_version . head $ xs}|]
+    (x,n) | x > 0 -> putStrLn [i|INFO found #{x} CDS regions listing gene #{gene} in #{n} GenBank records|]
+    _ -> putStrLn [i|INFO no features found for gene #{gene}|]
+
+
+
+  forM_ paired_features $ \(accession, Feature{..}) -> do
+    putStrLn [i|Feature #{f_feature_key} #{location_to_region f_location} in #{accession}|]
+    forM_ f_qualifiers $ \Qualifier{..} -> do
+      putStrLn [i|  #{q_name} #{q_value}|]
+
+  putStrLn $ "DONE"
+
+
 
 
 --------------------------------------------------------------------------------
@@ -364,7 +435,7 @@ read_all_genbank_file filename = do
   text <- T.readFile filename
   -- T.putStrLn text
 
-  let result = parse (some parse_genbank <* eof) filename text
+  let result = parse (some parse_genbank <* (optional newline) <* eof) filename text
   case result of
     Left bundle -> do
       putStr (errorBundlePretty bundle)
@@ -475,11 +546,26 @@ location_to_region (LocationJoin xs) = (start, stop)  -- this might not work so 
     stop = maximum coords
 location_to_region _ = error "ERROR other location constructs not handeled for region boundary"
 
+
+overlaps_region :: FeatureLocation -> (Int, Int) -> Bool
+overlaps_region (ContiguousSpan x y) (xx, yy) = are_overlapping (x,y) (xx,yy)
+overlaps_region (ImpreciseSpan x y _ _) (xx, yy) = are_overlapping (x,y) (xx,yy)
+overlaps_region (Complement x) r = overlaps_region x r
+overlaps_region (LocationJoin xs) r = or . map (\x -> overlaps_region x r) $ xs
+overlaps_region _ _ = error "ERROR other location constructs not handeled for region overlap check"
+
+
 is_contained :: (Int, Int) -> (Int, Int) -> Bool
 is_contained (outer_start, outer_stop) (inner_start, inner_stop) = start_inside && stop_inside
   where
     start_inside = (outer_start <= inner_start) && (inner_start <= outer_stop)
     stop_inside = (outer_start <= inner_stop) && (inner_stop <= outer_stop)
+
+are_overlapping :: (Int, Int) -> (Int, Int) -> Bool
+are_overlapping a@(ax,ay) b@(bx,by) = is_contained a (bx,bx) || is_contained a (by,by) || is_contained b (ax,ax) || is_contained b (ay,ay)
+
+
+
 
 
 --is_feature_inside :: (Int, Int) -> Feature -> Bool
@@ -506,6 +592,18 @@ record_line :: RecordInfo -> T.Text
 record_line RecordInfo{..} = T.intercalate "\t" [ ri_accession, ri_source, T.pack . show $ ri_bp, T.pack . show $ ri_circular, ri_dblink, ri_definition]
 
 
+al_to_region :: AccessionLocation -> (Int,Int)
+al_to_region AccessionLocation{..} = (min al_start al_stop, max al_start al_stop)
+
+filter_extract_origin_seqs :: [AccessionLocation] -> GenBank -> [(T.Text,T.Text)]
+filter_extract_origin_seqs xs g@GenBank{..} = seqs
+  where
+    relevant = filter (\x -> al_accession x == gb_version) xs
+    regions = map al_to_region relevant
+    cds_features = filter cds_filter gb_features
+    overlapping_features = filter (\feature -> or . map (overlaps_region (f_location feature)) $ regions) cds_features
+    seqs = map (extract_labeled_sequence g) overlapping_features
+  
 
 --------------------------------------------------------------------------------
 
