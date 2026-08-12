@@ -223,7 +223,7 @@ command_parameters = O.hsubparser
                    <> O.command "filter-overlap-fasta"          (O.info filter_overlap_fasta_opts         (O.progDesc "Filter CDS regions if region overlaps, and extract the matches to a FASTA file"))
                    <> O.command "find-feature-overlap"          (O.info find_feature_overlap_opts         (O.progDesc "List any features that overlap the specified location (features that wrap around origin may be erroneously reported)"))
                    <> O.command "info-table"                    (O.info info_table_opts                   (O.progDesc "Generate TSV file with columns about the accessions, organism, and some supplementary info"))
-                   <> O.command "search-gene"                   (O.info search_gene_opts                  (O.progDesc "Search features for gene name"))
+                   <> O.command "search-gene"                   (O.info search_gene_opts                  (O.progDesc "Search CDS features for gene name"))
                    -- <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    -- TODO ? <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    )
