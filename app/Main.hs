@@ -45,7 +45,8 @@ import Data.String (IsString)
 import ParseGenBank
 import FeatureLocation
 import AccessionLocationCSV
-
+import ParseFeatureLocation
+import GenomeDiagramRegion
 
 --------------------------------------------------------------------------------
 --- Local data structures
@@ -79,6 +80,10 @@ data CommandParameters = ExtractGeneNucleotide { egn_arg_input_genbank :: String
                        | InfoTable { it_arg_input_genbank :: Maybe String
                                    , it_arg_output_tsv :: String
                                    }
+                       | OperonFeatures { of_arg_input_genbank :: String
+                                        , of_arg_region :: String
+                                        , of_arg_output_json :: String
+                                        }
                        | SearchGene { sg_arg_input_genbank :: Maybe String
                                     , sg_arg_gene :: String
                                     }
@@ -142,6 +147,15 @@ output_fasta_parse = O.strOption
                         <> O.help "FASTA file"
                       )
 
+output_json_parse :: IsString s => O.Parser s
+output_json_parse = O.strOption
+                      ( O.long "output-json"
+                        <> O.short 'o'
+                        <> O.metavar "FILE"
+                        <> O.help "JSON file"
+                      )
+
+
 output_tsv_parse :: IsString s => O.Parser s
 output_tsv_parse = O.strOption
                       ( O.long "output-tsv"
@@ -166,6 +180,14 @@ read_prefix_parse = O.strOption
                         <> O.metavar "LABEL"
                         <> O.help "a label to prepend to the FASTA read ID"
                       )
+
+region_parse :: IsString s => O.Parser s
+region_parse = O.strOption
+                 ( O.long "region"
+                 <> O.short 'r'
+                 <> O.metavar "REGION"
+                 <> O.help "location of a region encoded as <start>..<end>, like 1..10"
+                 )
 
 location_parse :: IsString s => O.Parser s
 location_parse = O.strOption
@@ -207,6 +229,10 @@ dump_fasta_opts = DumpFasta <$> input_genbank_parse <*> output_fasta_parse
 info_table_opts :: O.Parser CommandParameters
 info_table_opts = InfoTable <$> multi_input_genbank_parse <*> output_tsv_parse
 
+
+operon_features_opts :: O.Parser CommandParameters
+operon_features_opts = OperonFeatures <$> input_genbank_parse <*> region_parse <*> output_json_parse
+
 search_gene_opts :: O.Parser CommandParameters
 search_gene_opts = SearchGene <$> multi_input_genbank_parse <*> gene_name_parse
 
@@ -223,6 +249,7 @@ command_parameters = O.hsubparser
                    <> O.command "filter-overlap-fasta"          (O.info filter_overlap_fasta_opts         (O.progDesc "Filter CDS regions if region overlaps, and extract the matches to a FASTA file"))
                    <> O.command "find-feature-overlap"          (O.info find_feature_overlap_opts         (O.progDesc "List any features that overlap the specified location (features that wrap around origin may be erroneously reported)"))
                    <> O.command "info-table"                    (O.info info_table_opts                   (O.progDesc "Generate TSV file with columns about the accessions, organism, and some supplementary info"))
+                   <> O.command "operon-features"               (O.info operon_features_opts              (O.progDesc "Extract simplified location information of CDS features in a region, like an operon, to JSON for diagrams"))
                    <> O.command "search-gene"                   (O.info search_gene_opts                  (O.progDesc "Search CDS features for gene name"))
                    -- <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    -- TODO ? <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
@@ -382,6 +409,29 @@ run_app (InfoTable genbank_file output_tsv) = do
 
 
 -- ----------------------------------------
+run_app (OperonFeatures  genbank_file encoded_region output_json) = do
+  Just g@GenBank{..} <- parse_genbank_file genbank_file  
+
+  location <- parse_encoded_region encoded_region
+  
+  let region = location_to_region location
+      features = filter (\x -> within_region (f_location x) region) . filter cds_filter $ gb_features
+      
+  when (0 == length features) $ putStrLn [i|INFO no features found for location #{encoded_region}|]
+
+  let dr_start = fst region
+      dr_stop = snd region
+      dr_genome = gb_source
+      dr_locus_tag = "operon over" <> T.pack encoded_region
+      dr_accession = gb_version
+      dr_features = map to_diagram_feature features
+
+
+  write_diagram_region_file output_json DiagramRegion{..}
+
+  putStrLn $ "DONE"
+    
+-- ----------------------------------------
 run_app (SearchGene genbank_file gene) = do
   
   Just xs <- case genbank_file of
@@ -452,6 +502,16 @@ read_all_genbank_from_stdin = do
       putStr (errorBundlePretty bundle)
       return Nothing
     Right xs -> return (Just xs)
+
+
+parse_encoded_region :: String -> IO FeatureLocation
+parse_encoded_region encoded_region = do
+  let result = parse parse_feature_location "encoded region" (T.pack encoded_region)
+  case result of
+    Left bundle -> do
+      putStr (errorBundlePretty bundle)
+      error "ERROR could not parse region"
+    Right x -> return x
 
 
 
@@ -554,6 +614,14 @@ overlaps_region (Complement x) r = overlaps_region x r
 overlaps_region (LocationJoin xs) r = or . map (\x -> overlaps_region x r) $ xs
 overlaps_region _ _ = error "ERROR other location constructs not handeled for region overlap check"
 
+within_region :: FeatureLocation -> (Int, Int) -> Bool
+within_region (ContiguousSpan x y) (xx, yy) = is_contained (xx,yy) (x,y)
+within_region (ImpreciseSpan x y _ _) (xx, yy) = is_contained (xx,yy) (x,y)
+within_region (Complement x) r = within_region x r
+within_region (LocationJoin xs) r = or . map (\x -> within_region x r) $ xs
+within_region _ _ = error "ERROR other location constructs not handeled for within region check"
+
+
 
 is_contained :: (Int, Int) -> (Int, Int) -> Bool
 is_contained (outer_start, outer_stop) (inner_start, inner_stop) = start_inside && stop_inside
@@ -604,6 +672,33 @@ filter_extract_origin_seqs xs g@GenBank{..} = seqs
     overlapping_features = filter (\feature -> or . map (overlaps_region (f_location feature)) $ regions) cds_features
     seqs = map (extract_labeled_sequence g) overlapping_features
   
+
+to_diagram_feature :: Feature -> DiagramFeature
+to_diagram_feature f@Feature{..} = DiagramFeature{..}
+  where
+    
+    gene = case (get_feature_qualifier_value "gene" f_qualifiers) of
+                Nothing -> ""
+                Just x -> x
+    product = case (get_feature_qualifier_value "product" f_qualifiers) of
+                Nothing -> ""
+                Just x -> x
+    locus_tag = case (get_feature_qualifier_value "locus_tag" f_qualifiers) of
+                Nothing -> ""
+                Just x -> x
+    df_label = T.intercalate "|" [gene, product, locus_tag]
+    df_type = f_feature_key
+    (df_start, df_stop) = location_to_region f_location
+    df_complement = is_location_complement f_location
+
+
+-- only checks top level feature location info, if it is nested under join() or order(), it is lost
+is_location_complement :: FeatureLocation -> Bool
+is_location_complement (Complement _) = True
+is_location_complement _ = False
+
+
+
 
 --------------------------------------------------------------------------------
 
