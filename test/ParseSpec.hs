@@ -227,6 +227,48 @@ spec = describe "Tests for parsing GenBank format" $ do
     parse (some parse_feature) "" feature_lines `shouldParse` expected
 
 
+  it "parse CDS feature with translation line-wrapping" $ do
+
+    let feature_lines = T.pack . unlines $ [ "     CDS             complement(14734..15390)"
+                                           , "                     /gene=\"rpsC\""
+                                           , "                     /locus_tag=\"BQ5344_RS00120\""
+                                           , "                     /inference=\"COORDINATES: similar to AA"
+                                           , "                     sequence:RefSeq:WP_018498276.1\""
+                                           , "                     /GO_function=\"GO:0003735 - structural constituent of"
+                                           , "                     ribosome [Evidence IEA]\""
+                                           , "                     /GO_process=\"GO:0006412 - translation [Evidence IEA]\""
+                                           , "                     /note=\"Derived by automated computational analysis using"
+                                           , "                     gene prediction method: Protein Homology.\""
+                                           , "                     /codon_start=1"
+                                           , "                     /transl_table=11"
+                                           , "                     /product=\"30S ribosomal protein S3\""
+                                           , "                     /protein_id=\"WP_006806084.1\""
+                                           , "                     /translation=\"MGQKVDPRGIRLGITRTWDSKWFAEGKEYVNNFHEDLKIKEYVK"
+                                           , "                     KNYYHAGISSIQIERTSPTEVAVIIETGKAGILIGRKGQEIEALKVKLEKLTGKRVQI"
+                                           , "                     KVQEIKNPNKDAQLVAESIATAIEKRVAYKRAVQQAIQRAEKAGIKGIKVMVSGRLNG"
+                                           , "                     AEIARSEWTLSGRVPLHTLRADVDYATATAHTTYGALGLKVWIFNGEVLSTTKEGENE"
+                                           , "                     \""
+                                           , "ORIGIN      "]
+        feature1_out = Feature { f_feature_key = "CDS"
+                               , f_location = Complement (ContiguousSpan 14734 15390)
+                               , f_qualifiers = [ Qualifier {q_name = "gene", q_value = "rpsC"}
+                                                , Qualifier {q_name = "locus_tag", q_value = "BQ5344_RS00120"}
+                                                , Qualifier {q_name = "inference", q_value = "COORDINATES: similar to AA sequence:RefSeq:WP_018498276.1"}
+                                                , Qualifier {q_name = "GO_function", q_value = "GO:0003735 - structural constituent of ribosome [Evidence IEA]"}
+                                                , Qualifier {q_name = "GO_process", q_value = "GO:0006412 - translation [Evidence IEA]"}
+                                                , Qualifier {q_name = "note", q_value = "Derived by automated computational analysis using gene prediction method: Protein Homology."}
+                                                , Qualifier {q_name = "codon_start", q_value = "1"}
+                                                , Qualifier {q_name = "transl_table", q_value = "11"}
+                                                , Qualifier {q_name = "product", q_value = "30S ribosomal protein S3"}
+                                                , Qualifier {q_name = "protein_id", q_value = "WP_006806084.1"}
+                                                , Qualifier {q_name = "translation", q_value = "MGQKVDPRGIRLGITRTWDSKWFAEGKEYVNNFHEDLKIKEYVKKNYYHAGISSIQIERTSPTEVAVIIETGKAGILIGRKGQEIEALKVKLEKLTGKRVQIKVQEIKNPNKDAQLVAESIATAIEKRVAYKRAVQQAIQRAEKAGIKGIKVMVSGRLNGAEIARSEWTLSGRVPLHTLRADVDYATATAHTTYGALGLKVWIFNGEVLSTTKEGENE"}
+                                              ]}
+        expected = [feature1_out]
+    parse (some parse_feature) "" feature_lines `shouldParse` expected
+                        
+    
+
+
   it "parse feature with location-like qualifier" $ do
     let feature_lines = T.pack . unlines $ [ "     tRNA            complement(1032828..1032913)"
                                            , "                     /locus_tag=\"J5W47_04370\""

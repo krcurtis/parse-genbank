@@ -33,7 +33,7 @@ import System.IO (openFile, IOMode(WriteMode), hClose, hPutStrLn)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Set as Set
-import Data.Maybe (isNothing, isJust)
+import Data.Maybe (isNothing, isJust, catMaybes)
 import Data.Either (partitionEithers)
 import Control.Exception
 
@@ -51,10 +51,11 @@ import GenomeDiagramRegion
 --------------------------------------------------------------------------------
 --- Local data structures
 
-data CommandParameters = ExtractGeneNucleotide { egn_arg_input_genbank :: String
-                                               , egn_arg_gene :: String
-                                               , egn_arg_output_file :: String
-                                               }
+data CommandParameters = ExtractGene { eg_arg_input_genbank :: String
+                                     , eg_arg_gene :: String
+                                     , eg_arg_use_translation :: Bool
+                                     , eg_arg_output_file :: String
+                                     }
                        | ExtractLocusTagNucleotide { eltn_arg_input_genbank :: String
                                                    , eltn_arg_locus_tag :: String
                                                    , eltn_arg_output_file :: String
@@ -64,9 +65,10 @@ data CommandParameters = ExtractGeneNucleotide { egn_arg_input_genbank :: String
                                                   , epn_arg_read_prefix :: String
                                                   , epn_arg_output_file :: String
                                                   }
-                       | DumpCDSNucleotide { dcn_arg_input_genbank :: String
-                                           , dcn_arg_output_file :: String
-                                           }
+                       | DumpCDS { dc_arg_input_genbank :: Maybe String
+                                 , dc_arg_use_translation :: Bool
+                                 , dc_arg_output_file :: String
+                                 }
                        | DumpFasta { df_arg_input_genbank :: String
                                    , df_arg_output_file :: String
                                    }
@@ -204,9 +206,15 @@ locus_tag_parse = O.strOption
                        <> O.help "locus tag"
                        )
 
+translation_switch_parse :: O.Parser Bool
+translation_switch_parse = O.switch
+                           ( O.long "translation"
+                           <> O.help "Use amino acid translation"
+                           )
 
-extract_gene_nucleotide_opts :: O.Parser CommandParameters
-extract_gene_nucleotide_opts = ExtractGeneNucleotide <$> input_genbank_parse <*> gene_name_parse <*> output_fasta_parse
+
+extract_gene_opts :: O.Parser CommandParameters
+extract_gene_opts = ExtractGene <$> input_genbank_parse <*> gene_name_parse <*> translation_switch_parse <*> output_fasta_parse
 
 extract_locus_tag_nucleotide_opts :: O.Parser CommandParameters
 extract_locus_tag_nucleotide_opts = ExtractLocusTagNucleotide <$> input_genbank_parse <*> locus_tag_parse <*> output_fasta_parse
@@ -214,8 +222,8 @@ extract_locus_tag_nucleotide_opts = ExtractLocusTagNucleotide <$> input_genbank_
 extract_product_nucleotide_opts :: O.Parser CommandParameters
 extract_product_nucleotide_opts = ExtractProductNucleotide <$> input_genbank_parse <*> product_string_parse <*> read_prefix_parse <*> output_fasta_parse
 
-dump_cds_nucleotide_opts :: O.Parser CommandParameters
-dump_cds_nucleotide_opts = DumpCDSNucleotide <$> input_genbank_parse <*> output_fasta_parse
+dump_cds_opts :: O.Parser CommandParameters
+dump_cds_opts = DumpCDS <$> multi_input_genbank_parse <*> translation_switch_parse <*> output_fasta_parse
 
 filter_overlap_fasta_opts :: O.Parser CommandParameters
 filter_overlap_fasta_opts = FilterOverlapFasta <$> multi_input_genbank_parse <*> accession_location_parse <*> output_fasta_parse
@@ -241,9 +249,9 @@ search_gene_opts = SearchGene <$> multi_input_genbank_parse <*> gene_name_parse
 command_parameters :: O.Parser CommandParameters
 command_parameters = O.hsubparser
                    (
-                      O.command "dump-cds-nucleotides"          (O.info dump_cds_nucleotide_opts          (O.progDesc "Dump all CDS regions as nucleotide sequences to FASTA file"))
+                      O.command "dump-cds"                      (O.info dump_cds_opts                     (O.progDesc "Dump all CDS region sequences to FASTA file"))
                    <> O.command "dump-fasta"                    (O.info dump_fasta_opts                   (O.progDesc "Dump GenBank file's ORIGIN sequence to FASTA file"))
-                   <> O.command "extract-gene-nucleotides"      (O.info extract_gene_nucleotide_opts      (O.progDesc "Extract the nucleotide sequence for the gene"))
+                   <> O.command "extract-gene"                  (O.info extract_gene_opts                 (O.progDesc "Extract sequence for the gene CDS region"))
                    <> O.command "extract-locus-tag-nucleotides" (O.info extract_locus_tag_nucleotide_opts (O.progDesc "Extract the nucleotide sequence for CDS region corresponding to the locus tag"))
                    <> O.command "extract-product-nucleotides"   (O.info extract_product_nucleotide_opts   (O.progDesc "Extract the nucleotide sequence for CDS regions matching the specified product"))
                    <> O.command "filter-overlap-fasta"          (O.info filter_overlap_fasta_opts         (O.progDesc "Filter CDS regions if region overlaps, and extract the matches to a FASTA file"))
@@ -270,15 +278,17 @@ main = O.execParser opts >>= run_app
 
 
 run_app :: CommandParameters -> IO ()
-run_app (ExtractGeneNucleotide genbank_file gene output_fasta) = do
+run_app (ExtractGene genbank_file gene use_translation output_fasta) = do
   Just g@GenBank{..} <- parse_genbank_file genbank_file
 
   -- make sure ORIGIN sequence is DNA and not amino acids
-  when ("DNA" /= l_molecule_type gb_locus) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  when ("DNA" /= l_molecule_type gb_locus && not use_translation) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
 
   let gene' = T.pack gene
       matching_cds = filter (gene_filter gene') gb_features
-      seqs = map (extract_labeled_sequence g) matching_cds
+      seqs = case use_translation of
+               False -> map (extract_labeled_sequence g) matching_cds
+               True -> catMaybes . map (extract_translation g) $ matching_cds
       seqs' = map (\(x,y) -> (gene' <> "|" <> x, y)) seqs
 
   when (0 == length seqs') $ error [i|ERROR no sequences found for gene #{gene'}|]
@@ -328,14 +338,28 @@ run_app (ExtractProductNucleotide genbank_file product_string read_prefix output
   putStrLn $ "DONE"
 
 -- ----------------------------------------
-run_app (DumpCDSNucleotide genbank_file output_fasta) = do
-  Just g@GenBank{..} <- parse_genbank_file genbank_file
+run_app (DumpCDS genbank_file use_translation output_fasta) = do
+  Just xs <- case genbank_file of
+               Nothing -> read_all_genbank_from_stdin
+               Just filename -> read_all_genbank_file filename
 
-  -- make sure ORIGIN sequence is DNA and not amino acids
-  when ("DNA" /= l_molecule_type gb_locus) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  -- Just g@GenBank{..} <- parse_genbank_file genbank_file
 
-  let matching_cds = filter cds_filter gb_features
-      seqs = map (extract_labeled_sequence g) matching_cds
+  -- TODO for all the genbank records, make sure ORIGIN sequence is DNA and not amino acids
+  -- when ("DNA" /= l_molecule_type gb_locus) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  when (not use_translation) $ mapM_ warn_non_dna xs
+
+  let genbank_nucleotide_cds_seqs :: GenBank -> [(T.Text, T.Text)]
+      genbank_nucleotide_cds_seqs g = map (extract_labeled_sequence g) matching_cds
+        where matching_cds = filter cds_filter (gb_features g)
+
+      genbank_aa_cds_seqs :: GenBank -> [(T.Text, T.Text)]
+      genbank_aa_cds_seqs g = catMaybes . map (extract_translation g) $ matching_cds
+        where matching_cds = filter cds_filter (gb_features g)
+        
+      seqs = concat $ case use_translation of
+                        False -> map genbank_nucleotide_cds_seqs xs
+                        True -> map genbank_aa_cds_seqs xs
 
   when (0 == length seqs) $ error [i|ERROR no CDS sequences found|]
 
@@ -573,12 +597,27 @@ extract_labeled_sequence g (f@Feature{..}) = (seq_label, extract_sequence f_loca
     seq_label = T.intercalate "|" [gb_version g, locus_tag]
 
 
+extract_translation :: GenBank -> Feature -> Maybe (T.Text, T.Text)
+extract_translation g (f@Feature{..}) = do
+  let locus_tag = case (get_locus_tag f) of
+                  Nothing -> "unknown_locus"
+                  Just x -> x
+                  
+  seq_string <- get_translation f
+  let seq_label = T.intercalate "|" [gb_version g, locus_tag]
+  return (seq_label, seq_string)
+
+
 
 get_locus_tag :: Feature -> Maybe T.Text
 get_locus_tag Feature{..} = get_feature_qualifier_value "locus_tag" f_qualifiers
 
 --get_protein_id :: Feature -> Maybe T.Text
 --get_protein_id Feature{..} = get_feature_qualifier_value "protein_id" f_qualifiers
+
+get_translation :: Feature -> Maybe T.Text
+get_translation Feature{..} = get_feature_qualifier_value "translation" f_qualifiers
+
 
 get_feature_qualifier_value :: T.Text -> [Qualifier] -> Maybe T.Text
 get_feature_qualifier_value key xs = Map.lookup key qual_map
@@ -697,6 +736,17 @@ is_location_complement :: FeatureLocation -> Bool
 is_location_complement (Complement _) = True
 is_location_complement _ = False
 
+
+--------------------------------------------------------------------------------
+
+
+-- the function says "warn" since it doesn't break the program, but could affect the user's results, rely on the user to take appropriate action
+warn_non_dna :: GenBank -> IO Bool
+warn_non_dna GenBank{..} = case (l_molecule_type gb_locus) of
+                             "DNA" -> return False
+                             _     -> do
+                                        putStrLn [i|WARNING GenBank sequence is not DNA, #{gb_version}, skip|]
+                                        return True
 
 
 

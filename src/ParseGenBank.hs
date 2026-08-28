@@ -281,8 +281,10 @@ parse_quoted_multiline_field n_indent = do
 
   let continuing_indent = full_indent n_indent
   contents <- many (try (optional newline *> string continuing_indent *> notFollowedBy (char '/') *> field_long_maybe_quoted))
-  _ <- char '"'
-  _ <- newline
+  
+  -- field_long_maybe_quoted requires there to be at least one character, but sometimes it ends on a double-quote symbol
+  _ <- (try ( newline *> string continuing_indent *> notFollowedBy (char '/') *> char '"' *> newline)) <|> (try ( char '"' *> newline))
+
   return $ (initial : contents)
 
 
