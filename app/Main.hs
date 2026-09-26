@@ -56,15 +56,17 @@ data CommandParameters = ExtractGene { eg_arg_input_genbank :: String
                                      , eg_arg_use_translation :: Bool
                                      , eg_arg_output_file :: String
                                      }
-                       | ExtractLocusTagNucleotide { eltn_arg_input_genbank :: String
-                                                   , eltn_arg_locus_tag :: String
-                                                   , eltn_arg_output_file :: String
-                                                  }
-                       | ExtractProductNucleotide { epn_arg_input_genbank :: String
-                                                  , epn_arg_product :: String
-                                                  , epn_arg_read_prefix :: String
-                                                  , epn_arg_output_file :: String
-                                                  }
+                       | ExtractLocusTag { elt_arg_input_genbank :: String
+                                         , elt_arg_locus_tag :: String
+                                         , elt_arg_use_translation :: Bool
+                                         , elt_arg_output_file :: String
+                                         }
+                       | ExtractProduct { ep_arg_input_genbank :: String
+                                        , ep_arg_product :: String
+                                        , ep_arg_use_translation :: Bool
+                                        , ep_arg_read_prefix :: String
+                                        , ep_arg_output_file :: String
+                                        }
                        | DumpCDS { dc_arg_input_genbank :: Maybe String
                                  , dc_arg_use_translation :: Bool
                                  , dc_arg_output_file :: String
@@ -86,9 +88,11 @@ data CommandParameters = ExtractGene { eg_arg_input_genbank :: String
                                         , of_arg_region :: String
                                         , of_arg_output_json :: String
                                         }
-                       | SearchGene { sg_arg_input_genbank :: Maybe String
-                                    , sg_arg_gene :: String
-                                    }
+                       | Search { sh_arg_input_genbank :: Maybe String
+                                , sh_arg_gene :: Maybe String
+                                , sh_arg_product :: Maybe String
+                                , sh_arg_locus_tag :: Maybe String
+                                }
   deriving (Show)
 
 
@@ -216,11 +220,11 @@ translation_switch_parse = O.switch
 extract_gene_opts :: O.Parser CommandParameters
 extract_gene_opts = ExtractGene <$> input_genbank_parse <*> gene_name_parse <*> translation_switch_parse <*> output_fasta_parse
 
-extract_locus_tag_nucleotide_opts :: O.Parser CommandParameters
-extract_locus_tag_nucleotide_opts = ExtractLocusTagNucleotide <$> input_genbank_parse <*> locus_tag_parse <*> output_fasta_parse
+extract_locus_tag_opts :: O.Parser CommandParameters
+extract_locus_tag_opts = ExtractLocusTag <$> input_genbank_parse <*> locus_tag_parse <*> translation_switch_parse <*> output_fasta_parse
 
-extract_product_nucleotide_opts :: O.Parser CommandParameters
-extract_product_nucleotide_opts = ExtractProductNucleotide <$> input_genbank_parse <*> product_string_parse <*> read_prefix_parse <*> output_fasta_parse
+extract_product_opts :: O.Parser CommandParameters
+extract_product_opts = ExtractProduct <$> input_genbank_parse <*> product_string_parse <*> translation_switch_parse <*> read_prefix_parse <*> output_fasta_parse
 
 dump_cds_opts :: O.Parser CommandParameters
 dump_cds_opts = DumpCDS <$> multi_input_genbank_parse <*> translation_switch_parse <*> output_fasta_parse
@@ -241,8 +245,8 @@ info_table_opts = InfoTable <$> multi_input_genbank_parse <*> output_tsv_parse
 operon_features_opts :: O.Parser CommandParameters
 operon_features_opts = OperonFeatures <$> input_genbank_parse <*> region_parse <*> output_json_parse
 
-search_gene_opts :: O.Parser CommandParameters
-search_gene_opts = SearchGene <$> multi_input_genbank_parse <*> gene_name_parse
+search_opts :: O.Parser CommandParameters
+search_opts = Search <$> multi_input_genbank_parse <*> optional gene_name_parse <*> optional product_string_parse <*> optional locus_tag_parse
 
 
 
@@ -252,13 +256,13 @@ command_parameters = O.hsubparser
                       O.command "dump-cds"                      (O.info dump_cds_opts                     (O.progDesc "Dump all CDS region sequences to FASTA file"))
                    <> O.command "dump-fasta"                    (O.info dump_fasta_opts                   (O.progDesc "Dump GenBank file's ORIGIN sequence to FASTA file"))
                    <> O.command "extract-gene"                  (O.info extract_gene_opts                 (O.progDesc "Extract sequence for the gene CDS region"))
-                   <> O.command "extract-locus-tag-nucleotides" (O.info extract_locus_tag_nucleotide_opts (O.progDesc "Extract the nucleotide sequence for CDS region corresponding to the locus tag"))
-                   <> O.command "extract-product-nucleotides"   (O.info extract_product_nucleotide_opts   (O.progDesc "Extract the nucleotide sequence for CDS regions matching the specified product"))
+                   <> O.command "extract-locus-tag"             (O.info extract_locus_tag_opts            (O.progDesc "Extract sequence for CDS region corresponding to the locus tag"))
+                   <> O.command "extract-product"               (O.info extract_product_opts              (O.progDesc "Extract sequence for CDS regions matching the specified product"))
                    <> O.command "filter-overlap-fasta"          (O.info filter_overlap_fasta_opts         (O.progDesc "Filter CDS regions if region overlaps, and extract the matches to a FASTA file"))
                    <> O.command "find-feature-overlap"          (O.info find_feature_overlap_opts         (O.progDesc "List any features that overlap the specified location (features that wrap around origin may be erroneously reported)"))
                    <> O.command "info-table"                    (O.info info_table_opts                   (O.progDesc "Generate TSV file with columns about the accessions, organism, and some supplementary info"))
                    <> O.command "operon-features"               (O.info operon_features_opts              (O.progDesc "Extract simplified location information of CDS features in a region, like an operon, to JSON for diagrams"))
-                   <> O.command "search-gene"                   (O.info search_gene_opts                  (O.progDesc "Search CDS features for gene name"))
+                   <> O.command "search"                        (O.info search_opts                      (O.progDesc "Search CDS features for gene name or product string or locus tag"))
                    -- <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    -- TODO ? <> O.command "summarize"  (O.info summarize_opts    (O.progDesc "Display some summary statistics about the GenBank file"))
                    )
@@ -299,15 +303,17 @@ run_app (ExtractGene genbank_file gene use_translation output_fasta) = do
   putStrLn $ "DONE"
 
 -- ----------------------------------------
-run_app (ExtractLocusTagNucleotide genbank_file locus_tag output_fasta) = do
+run_app (ExtractLocusTag genbank_file locus_tag use_translation output_fasta) = do
   Just g@GenBank{..} <- parse_genbank_file genbank_file
 
   -- make sure ORIGIN sequence is DNA and not amino acids
-  when ("DNA" /= l_molecule_type gb_locus) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  when ("DNA" /= l_molecule_type gb_locus && not use_translation) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
 
   let locus_tag' = T.pack locus_tag
       matching_cds = filter (locus_tag_filter locus_tag') gb_features
-      seqs = map (extract_labeled_sequence g) matching_cds
+      seqs = case use_translation of
+               False -> map (extract_labeled_sequence g) matching_cds
+               True -> catMaybes . map (extract_translation g) $ matching_cds
 
   when (0 == length seqs) $ error [i|ERROR no CDS sequences found for locus_tag #{locus_tag}|]
 
@@ -318,16 +324,18 @@ run_app (ExtractLocusTagNucleotide genbank_file locus_tag output_fasta) = do
 
 
 -- ----------------------------------------
-run_app (ExtractProductNucleotide genbank_file product_string read_prefix output_fasta) = do
+run_app (ExtractProduct genbank_file product_string use_translation read_prefix output_fasta) = do
   Just g@GenBank{..} <- parse_genbank_file genbank_file
 
   -- make sure ORIGIN sequence is DNA and not amino acids
-  when ("DNA" /= l_molecule_type gb_locus) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  when ("DNA" /= l_molecule_type gb_locus && not use_translation) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
 
   let product' = T.pack product_string
       seq_label = T.pack read_prefix
       matching_cds = filter (product_filter product') gb_features
-      seqs = map (extract_labeled_sequence g) matching_cds
+      seqs = case use_translation of
+               False -> map (extract_labeled_sequence g) matching_cds
+               True -> catMaybes . map (extract_translation g) $ matching_cds
       seqs' = map (\(x,y) -> (seq_label <> "|" <> x, y)) seqs
 
   when (0 == length seqs') $ error [i|ERROR no sequences found for product #{product'}|]
@@ -456,33 +464,47 @@ run_app (OperonFeatures  genbank_file encoded_region output_json) = do
   putStrLn $ "DONE"
     
 -- ----------------------------------------
-run_app (SearchGene genbank_file gene) = do
-  
-  Just xs <- case genbank_file of
-               Nothing -> read_all_genbank_from_stdin
-               Just filename -> read_all_genbank_file filename
+run_app (Search genbank_file gene product locus_tag) = do
+
+  if isNothing gene && isNothing product && isNothing locus_tag then
+    putStrLn $ "ERROR neither gene nor product nor locus_tag specified"
+  else do
+    Just xs <- case genbank_file of
+                 Nothing -> read_all_genbank_from_stdin
+                 Just filename -> read_all_genbank_file filename
 
 
-  let gene' = T.pack gene
-      filter_features gb = (gb_version gb, filter (gene_filter gene') (gb_features gb))
-      semipaired_features = map filter_features xs
-      all_features = concat . (map snd) $ semipaired_features
-      paired_features = concat . map (\(x,ys) -> zip (repeat x) ys) $ semipaired_features
-      
+    let semipaired_features = map (\gb -> (gb_version gb, gb_features gb)) $ xs
+        paired_features = concat . map (\(x,ys) -> zip (repeat x) ys) $ semipaired_features
 
-  case (length all_features, length xs) of
-    (x,1) | x > 0 -> putStrLn [i|INFO found #{x} CDS regions listing gene #{gene} in #{gb_version . head $ xs}|]
-    (x,n) | x > 0 -> putStrLn [i|INFO found #{x} CDS regions listing gene #{gene} in #{n} GenBank records|]
-    _ -> putStrLn [i|INFO no features found for gene #{gene}|]
+        features = case gene of
+                     Nothing -> paired_features
+                     Just gene' -> filter (gene_filter (T.pack gene') . snd) paired_features
+        features' = case product of
+                      Nothing -> features
+                      Just product' -> filter (product_filter (T.pack product') . snd) features
+        features'' = case locus_tag of
+                       Nothing -> features'
+                       Just locus_tag' -> filter (locus_tag_filter (T.pack locus_tag') . snd) features
 
 
+    case (length  features'', length xs, gene, product, locus_tag) of
+      (x,1,_,_,_) | x > 0                                -> putStrLn [i|INFO found #{x} matching CDS regions in #{gb_version . head $ xs}|]
+      (x,n,_,_,_) | x > 0                                -> putStrLn [i|INFO found #{x} matching CDS regions in #{n} GenBank records|]
+      (_, _, Nothing,    Nothing,       Just locus_tag') -> putStrLn [i|INFO no features found for locus_tag #{locus_tag'}|]
+      (_, _, Nothing,    Just product', Nothing)         -> putStrLn [i|INFO no features found for product #{product'}|]
+      (_, _, Nothing,    Just product', Just locus_tag') -> putStrLn [i|INFO no features found for product #{product'} and locus_tag #{locus_tag'}|]
+      (_, _, Just gene', Nothing,       Nothing)         -> putStrLn [i|INFO no features found for gene #{gene'}|]
+      (_, _, Just gene', Nothing,       Just locus_tag') -> putStrLn [i|INFO no features found for gene #{gene'} and locus_tag #{locus_tag'}|]
+      (_, _, Just gene', Just product', Nothing)         -> putStrLn [i|INFO no features found for gene #{gene'} and product #{product'}|]
+      (_, _, Just gene', Just product', Just locus_tag') -> putStrLn [i|INFO no features found for gene #{gene'} and product #{product'} and locus_tag #{locus_tag'}|]
 
-  forM_ paired_features $ \(accession, Feature{..}) -> do
-    putStrLn [i|Feature #{f_feature_key} #{location_to_region f_location} in #{accession}|]
-    forM_ f_qualifiers $ \Qualifier{..} -> do
-      putStrLn [i|  #{q_name} #{q_value}|]
+    forM_ features'' $ \(accession, Feature{..}) -> do
+      putStrLn [i|Feature #{f_feature_key} #{location_to_region f_location} in #{accession}|]
+      forM_ f_qualifiers $ \Qualifier{..} -> do
+        putStrLn [i|  #{q_name} #{q_value}|]
 
-  putStrLn $ "DONE"
+    putStrLn $ "DONE"
 
 
 
