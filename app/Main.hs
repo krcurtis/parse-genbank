@@ -51,17 +51,17 @@ import GenomeDiagramRegion
 --------------------------------------------------------------------------------
 --- Local data structures
 
-data CommandParameters = ExtractGene { eg_arg_input_genbank :: String
+data CommandParameters = ExtractGene { eg_arg_input_genbank :: Maybe String
                                      , eg_arg_gene :: String
                                      , eg_arg_use_translation :: Bool
                                      , eg_arg_output_file :: String
                                      }
-                       | ExtractLocusTag { elt_arg_input_genbank :: String
+                       | ExtractLocusTag { elt_arg_input_genbank :: Maybe String
                                          , elt_arg_locus_tag :: String
                                          , elt_arg_use_translation :: Bool
                                          , elt_arg_output_file :: String
                                          }
-                       | ExtractProduct { ep_arg_input_genbank :: String
+                       | ExtractProduct { ep_arg_input_genbank :: Maybe String
                                         , ep_arg_product :: String
                                         , ep_arg_use_translation :: Bool
                                         , ep_arg_read_prefix :: String
@@ -218,13 +218,13 @@ translation_switch_parse = O.switch
 
 
 extract_gene_opts :: O.Parser CommandParameters
-extract_gene_opts = ExtractGene <$> input_genbank_parse <*> gene_name_parse <*> translation_switch_parse <*> output_fasta_parse
+extract_gene_opts = ExtractGene <$> multi_input_genbank_parse <*> gene_name_parse <*> translation_switch_parse <*> output_fasta_parse
 
 extract_locus_tag_opts :: O.Parser CommandParameters
-extract_locus_tag_opts = ExtractLocusTag <$> input_genbank_parse <*> locus_tag_parse <*> translation_switch_parse <*> output_fasta_parse
+extract_locus_tag_opts = ExtractLocusTag <$> multi_input_genbank_parse <*> locus_tag_parse <*> translation_switch_parse <*> output_fasta_parse
 
 extract_product_opts :: O.Parser CommandParameters
-extract_product_opts = ExtractProduct <$> input_genbank_parse <*> product_string_parse <*> translation_switch_parse <*> read_prefix_parse <*> output_fasta_parse
+extract_product_opts = ExtractProduct <$> multi_input_genbank_parse <*> product_string_parse <*> translation_switch_parse <*> read_prefix_parse <*> output_fasta_parse
 
 dump_cds_opts :: O.Parser CommandParameters
 dump_cds_opts = DumpCDS <$> multi_input_genbank_parse <*> translation_switch_parse <*> output_fasta_parse
@@ -283,16 +283,19 @@ main = O.execParser opts >>= run_app
 
 run_app :: CommandParameters -> IO ()
 run_app (ExtractGene genbank_file gene use_translation output_fasta) = do
-  Just g@GenBank{..} <- parse_genbank_file genbank_file
+  -- Just g@GenBank{..} <- parse_genbank_file genbank_file  
+  Just xs <- case genbank_file of
+               Nothing -> read_all_genbank_from_stdin
+               Just filename -> read_all_genbank_file filename
+
 
   -- make sure ORIGIN sequence is DNA and not amino acids
-  when ("DNA" /= l_molecule_type gb_locus && not use_translation) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  -- when ("DNA" /= l_molecule_type gb_locus && not use_translation) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  when (not use_translation) $ mapM_ warn_non_dna xs
 
-  let gene' = T.pack gene
-      matching_cds = filter (gene_filter gene') gb_features
-      seqs = case use_translation of
-               False -> map (extract_labeled_sequence g) matching_cds
-               True -> catMaybes . map (extract_translation g) $ matching_cds
+
+  let gene' = T.pack gene  
+      seqs = extract_filtered_sequences (gene_filter gene') use_translation xs
       seqs' = map (\(x,y) -> (gene' <> "|" <> x, y)) seqs
 
   when (0 == length seqs') $ error [i|ERROR no sequences found for gene #{gene'}|]
@@ -304,16 +307,16 @@ run_app (ExtractGene genbank_file gene use_translation output_fasta) = do
 
 -- ----------------------------------------
 run_app (ExtractLocusTag genbank_file locus_tag use_translation output_fasta) = do
-  Just g@GenBank{..} <- parse_genbank_file genbank_file
+  Just xs <- case genbank_file of
+               Nothing -> read_all_genbank_from_stdin
+               Just filename -> read_all_genbank_file filename
 
   -- make sure ORIGIN sequence is DNA and not amino acids
-  when ("DNA" /= l_molecule_type gb_locus && not use_translation) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  when (not use_translation) $ mapM_ warn_non_dna xs
+
 
   let locus_tag' = T.pack locus_tag
-      matching_cds = filter (locus_tag_filter locus_tag') gb_features
-      seqs = case use_translation of
-               False -> map (extract_labeled_sequence g) matching_cds
-               True -> catMaybes . map (extract_translation g) $ matching_cds
+      seqs = extract_filtered_sequences (locus_tag_filter locus_tag') use_translation xs
 
   when (0 == length seqs) $ error [i|ERROR no CDS sequences found for locus_tag #{locus_tag}|]
 
@@ -325,17 +328,17 @@ run_app (ExtractLocusTag genbank_file locus_tag use_translation output_fasta) = 
 
 -- ----------------------------------------
 run_app (ExtractProduct genbank_file product_string use_translation read_prefix output_fasta) = do
-  Just g@GenBank{..} <- parse_genbank_file genbank_file
+  Just xs <- case genbank_file of
+               Nothing -> read_all_genbank_from_stdin
+               Just filename -> read_all_genbank_file filename
 
   -- make sure ORIGIN sequence is DNA and not amino acids
-  when ("DNA" /= l_molecule_type gb_locus && not use_translation) $ error [i|ERROR GenBank sequence is not DNA, from file #{genbank_file}|]
+  when (not use_translation) $ mapM_ warn_non_dna xs
+
 
   let product' = T.pack product_string
       seq_label = T.pack read_prefix
-      matching_cds = filter (product_filter product') gb_features
-      seqs = case use_translation of
-               False -> map (extract_labeled_sequence g) matching_cds
-               True -> catMaybes . map (extract_translation g) $ matching_cds
+      seqs = extract_filtered_sequences (product_filter product') use_translation xs
       seqs' = map (\(x,y) -> (seq_label <> "|" <> x, y)) seqs
 
   when (0 == length seqs') $ error [i|ERROR no sequences found for product #{product'}|]
@@ -757,6 +760,23 @@ to_diagram_feature f@Feature{..} = DiagramFeature{..}
 is_location_complement :: FeatureLocation -> Bool
 is_location_complement (Complement _) = True
 is_location_complement _ = False
+
+
+--------------------------------------------------------------------------------
+
+extract_filtered_sequences :: (Feature -> Bool) -> Bool -> [GenBank] -> [(T.Text, T.Text)]
+extract_filtered_sequences feature_filter use_translation xs =  seqs
+  where
+      genbank_matching_cds :: GenBank -> [(GenBank,Feature)]
+      genbank_matching_cds g = zip (repeat g) matching_cds
+        where
+          matching_cds = filter feature_filter (gb_features g)
+      
+      all_matching_cds = concat . map genbank_matching_cds $ xs
+  
+      seqs = case use_translation of
+               False -> map (uncurry extract_labeled_sequence) all_matching_cds
+               True -> catMaybes . map (uncurry extract_translation) $ all_matching_cds
 
 
 --------------------------------------------------------------------------------
